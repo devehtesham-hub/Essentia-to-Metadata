@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
 Analyze music library with Essentia and write genre/mood to tags
-Interactive version with logging and tag formatting
+Supports both interactive mode and CLI arguments for automation
 """
 import os
 import json
 import sys
 import re
+import argparse
 from pathlib import Path
 from datetime import datetime
 import numpy as np
@@ -820,41 +821,312 @@ def display_config_summary(config, music_path):
             sys.exit(0)
 
 
+def parse_arguments():
+    """Parse command-line arguments for automated/non-interactive mode"""
+    parser = argparse.ArgumentParser(
+        description='Analyze music files with Essentia and write genre/mood tags',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Interactive mode (no arguments)
+  python tag_music.py This is default behaviour
+  
+  # Automated mode with path
+  python tag_music.py /path/to/music --auto
+  
+  # Automated mode with custom settings
+  python tag_music.py /path/to/music --auto --genres 4 --genre-threshold 20 --mood-threshold 1
+  
+  # Watch a specific file (for file watcher integration)
+  python tag_music.py /path/to/song.flac --auto --single-file
+  
+  # Dry run to test
+  python tag_music.py /path/to/music --auto --dry-run
+
+Genre format styles:
+  parent_child: "Rock - Alternative Rock" (default)
+  child_parent: "Alternative Rock - Rock"
+  child_only:   "Alternative Rock"
+  raw:          "Rock---Alternative Rock"
+"""
+    )
+    
+    # Positional argument for path
+    parser.add_argument(
+        'path',
+        nargs='?',
+        help='Path to music file or directory to analyze'
+    )
+    
+    # Mode flags
+    parser.add_argument(
+        '--auto', '-a',
+        action='store_true',
+        help='Run in automated (non-interactive) mode'
+    )
+    
+    parser.add_argument(
+        '--single-file', '-f',
+        action='store_true',
+        help='Process a single file instead of directory (for file watcher integration)'
+    )
+    
+    # Genre settings
+    parser.add_argument(
+        '--genres', '-g',
+        type=int,
+        default=3,
+        metavar='N',
+        help='Number of genres to write (default: 3)'
+    )
+    
+    parser.add_argument(
+        '--genre-threshold', '-gt',
+        type=float,
+        default=15.0,
+        metavar='PCT',
+        help='Genre confidence threshold in percent (default: 15)'
+    )
+    
+    parser.add_argument(
+        '--genre-format', '-gf',
+        choices=['parent_child', 'child_parent', 'child_only', 'raw'],
+        default='parent_child',
+        help='Genre tag format style (default: parent_child)'
+    )
+    
+    # Mood settings
+    parser.add_argument(
+        '--no-moods',
+        action='store_true',
+        help='Disable mood analysis'
+    )
+    
+    parser.add_argument(
+        '--mood-threshold', '-mt',
+        type=float,
+        default=0.5,
+        metavar='PCT',
+        help='Mood confidence threshold in percent (default: 0.5)'
+    )
+    
+    # Other settings
+    parser.add_argument(
+        '--dry-run', '-d',
+        action='store_true',
+        help='Analyze files but do not write tags'
+    )
+    
+    parser.add_argument(
+        '--no-confidence-tags',
+        action='store_true',
+        help='Do not write confidence score tags'
+    )
+    
+    parser.add_argument(
+        '--overwrite', '-o',
+        action='store_true',
+        help='Overwrite existing genre tags'
+    )
+    
+    parser.add_argument(
+        '--quiet', '-q',
+        action='store_true',
+        help='Minimal output (disable verbose mode)'
+    )
+    
+    parser.add_argument(
+        '--log-dir',
+        type=str,
+        default=None,
+        metavar='DIR',
+        help='Directory for log files (default: current directory)'
+    )
+    
+    parser.add_argument(
+        '--model-dir',
+        type=str,
+        default=None,
+        metavar='DIR',
+        help='Directory containing Essentia models (default: ~/essentia_models)'
+    )
+    
+    return parser.parse_args()
+
+
+def config_from_args(args):
+    """Create Config object from command-line arguments"""
+    config = Config()
+    config.dry_run = args.dry_run
+    config.top_n_genres = args.genres
+    config.genre_threshold = args.genre_threshold / 100.0
+    config.mood_threshold = args.mood_threshold / 100.0
+    config.enable_moods = not args.no_moods
+    config.write_confidence_tags = not args.no_confidence_tags
+    config.overwrite_existing = args.overwrite
+    config.verbose = not args.quiet
+    config.genre_format = args.genre_format
+    
+    # Set up log file
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    log_filename = f"essentia_tagger_{timestamp}.log"
+    if args.log_dir:
+        log_dir = Path(args.log_dir)
+        log_dir.mkdir(parents=True, exist_ok=True)
+        config.log_file = str(log_dir / log_filename)
+    else:
+        config.log_file = log_filename
+    
+    return config
+
+
+def process_single_file(filepath, analyzer, tag_writer, config, logger):
+    """Process a single audio file (for file watcher integration)"""
+    filepath = Path(filepath)
+    
+    if not filepath.exists():
+        logger.log(f"❌ File not found: {filepath}")
+        return False
+    
+    audio_extensions = {'.flac', '.mp3', '.ogg', '.m4a', '.wav'}
+    if filepath.suffix.lower() not in audio_extensions:
+        logger.log(f"⏭️ Skipping non-audio file: {filepath}")
+        return False
+    
+    logger.log(f"🎵 Processing: {filepath.name}")
+    
+    results = analyzer.analyze_file(filepath)
+    
+    if results:
+        # Print results
+        if results.get('genres'):
+            genre_list = [f"{g['label']} ({g['confidence']:.1%})" for g in results['genres']]
+            logger.log(f"   🎸 Genres: {', '.join(genre_list)}")
+        
+        if results.get('formatted_genres'):
+            logger.log(f"   🎸 Formatted: {', '.join(results['formatted_genres'])}")
+        
+        if results.get('moods'):
+            mood_list = [f"{m['label']} ({m['confidence']:.1%})" for m in results['moods'][:3]]
+            logger.log(f"   😊 Moods: {', '.join(mood_list)}")
+        
+        # Log to file
+        logger.log_analysis(filepath, results, filepath.name)
+        
+        # Write tags
+        tag_writer.write_tags(filepath, results)
+        
+        if not config.dry_run:
+            logger.log("   ✅ Tags written")
+        
+        return True
+    else:
+        logger.log(f"   ❌ Analysis failed")
+        return False
+
+
 def main():
     """Main entry point"""
+    args = parse_arguments()
     logger = None
-    try:
-        # Get path from user
-        music_path = get_music_path()
+    
+    # Check if we should run in automated mode
+    if args.auto or args.single_file:
+        # Automated/CLI mode
+        if not args.path:
+            print("❌ Error: Path is required in automated mode")
+            print("   Use: python tag_music.py /path/to/music --auto")
+            sys.exit(1)
         
-        # Configure settings interactively
-        config = configure_settings()
+        music_path = os.path.expanduser(args.path)
         
-        # Show summary and confirm
-        display_config_summary(config, music_path)
+        # Update model directory if specified
+        global MODEL_DIR, EMBEDDING_MODEL, GENRE_MODEL, GENRE_METADATA, MOOD_MODEL, MOOD_METADATA
+        if args.model_dir:
+            MODEL_DIR = os.path.expanduser(args.model_dir)
+            EMBEDDING_MODEL = f"{MODEL_DIR}/discogs-effnet-bs64-1.pb"
+            GENRE_MODEL = f"{MODEL_DIR}/genre_discogs400-discogs-effnet-1.pb"
+            GENRE_METADATA = f"{MODEL_DIR}/genre_discogs400-discogs-effnet-1.json"
+            MOOD_MODEL = f"{MODEL_DIR}/mtg_jamendo_moodtheme-discogs-effnet-1.pb"
+            MOOD_METADATA = f"{MODEL_DIR}/mtg_jamendo_moodtheme-discogs-effnet-1.json"
         
-        # Initialize logger
-        logger = Logger(config.log_file)
-        logger.log_config(config, music_path)
+        config = config_from_args(args)
         
-        # Initialize
-        analyzer = EssentiaAnalyzer(config, logger)
-        tag_writer = TagWriter(config, logger)
-        
-        # Process library
-        scan_library(music_path, analyzer, tag_writer, config, logger)
-        
-        logger.log("\n" + "=" * 70)
-        logger.log("✅ PROCESSING COMPLETE!")
-        logger.log("=" * 70)
-        logger.log(f"\n📝 Full log saved to: {config.log_file}")
-        
-    except KeyboardInterrupt:
-        print("\n\n⚠️  Interrupted by user. Exiting...")
-        sys.exit(1)
-    finally:
-        if logger:
-            logger.close()
+        try:
+            logger = Logger(config.log_file)
+            logger.log_config(config, music_path)
+            
+            # Summary output
+            mode_str = "DRY RUN" if config.dry_run else "LIVE"
+            logger.log(f"🎸 Essentia Tagger [{mode_str}]")
+            logger.log(f"   Path: {music_path}")
+            logger.log(f"   Genres: {config.top_n_genres} (threshold: {config.genre_threshold:.1%})")
+            if config.enable_moods:
+                logger.log(f"   Moods: enabled (threshold: {config.mood_threshold:.2%})")
+            logger.log("")
+            
+            analyzer = EssentiaAnalyzer(config, logger)
+            tag_writer = TagWriter(config, logger)
+            
+            if args.single_file:
+                # Single file mode
+                success = process_single_file(music_path, analyzer, tag_writer, config, logger)
+                sys.exit(0 if success else 1)
+            else:
+                # Directory mode
+                if not os.path.isdir(music_path):
+                    logger.log(f"❌ Error: Not a directory: {music_path}")
+                    sys.exit(1)
+                
+                scan_library(music_path, analyzer, tag_writer, config, logger)
+            
+            logger.log("\n✅ Processing complete!")
+            logger.log(f"📝 Log: {config.log_file}")
+            
+        except KeyboardInterrupt:
+            print("\n⚠️ Interrupted")
+            sys.exit(1)
+        except Exception as e:
+            print(f"❌ Error: {e}")
+            sys.exit(1)
+        finally:
+            if logger:
+                logger.close()
+    
+    else:
+        # Interactive mode (original behavior)
+        try:
+            # Get path from user
+            music_path = get_music_path()
+            
+            # Configure settings interactively
+            config = configure_settings()
+            
+            # Show summary and confirm
+            display_config_summary(config, music_path)
+            
+            # Initialize logger
+            logger = Logger(config.log_file)
+            logger.log_config(config, music_path)
+            
+            # Initialize
+            analyzer = EssentiaAnalyzer(config, logger)
+            tag_writer = TagWriter(config, logger)
+            
+            # Process library
+            scan_library(music_path, analyzer, tag_writer, config, logger)
+            
+            logger.log("\n" + "=" * 70)
+            logger.log("✅ PROCESSING COMPLETE!")
+            logger.log("=" * 70)
+            logger.log(f"\n📝 Full log saved to: {config.log_file}")
+            
+        except KeyboardInterrupt:
+            print("\n\n⚠️  Interrupted by user. Exiting...")
+            sys.exit(1)
+        finally:
+            if logger:
+                logger.close()
 
 
 if __name__ == '__main__':
