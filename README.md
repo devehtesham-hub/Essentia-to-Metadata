@@ -24,6 +24,8 @@ Analyze your music collection using machine learning and write accurate genre an
 - 💾 **FLAC & MP3 support** - Writes to standard tag formats
 - 🧪 **Dry run mode** - Test before making changes
 - 🚀 **CPU-only** - No GPU required (though it helps!)
+- 🤖 **Automation support** - CLI arguments for scripted/automated workflows
+- 🔄 **Picard integration** - Auto-tag files saved by MusicBrainz Picard.
 
 ---
 
@@ -98,7 +100,64 @@ You'll be prompted for:
 **Recommendation:** Run in dry-run mode first to preview results!
 
 ---
+## 🤖 Command Line / Automation Mode
 
+For scripting or integration with other tools, use CLI arguments:
+
+```bash
+# Basic automated mode
+python tag_music.py /path/to/music --auto
+
+# Process a single file (e.g., from a file watcher)
+python tag_music.py /path/to/song.flac --auto --single-file
+
+# Custom settings
+python tag_music.py /path/to/music --auto \
+    --genres 4 \
+    --genre-threshold 20 \
+    --mood-threshold 1 \
+    --genre-format child_only \
+    --overwrite
+
+# Dry run for testing
+python tag_music.py /path/to/music --auto --dry-run
+```
+
+### CLI Arguments Reference
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--auto` | `-a` | Non-interactive mode | - |
+| `--single-file` | `-f` | Process single file | - |
+| `--genres N` | `-g` | Number of genres | 3 |
+| `--genre-threshold PCT` | `-gt` | Genre confidence % | 15 |
+| `--genre-format STYLE` | `-gf` | Format style | parent_child |
+| `--no-moods` | - | Disable mood analysis | - |
+| `--mood-threshold PCT` | `-mt` | Mood confidence % | 0.5 |
+| `--dry-run` | `-d` | Don't write tags | - |
+| `--overwrite` | `-o` | Overwrite existing tags | - |
+| `--quiet` | `-q` | Minimal output | - |
+| `--log-dir DIR` | - | Log file directory | ./ |
+| `--model-dir DIR` | - | Essentia models directory | ~/essentia_models |
+
+---
+
+## 🎵 MusicBrainz Picard Automation
+
+Automatically tag files whenever Picard saves them! Perfect for server setups.
+
+See **[PICARD_AUTOMATION_SETUP.md](PICARD_AUTOMATION_SETUP.md)** for complete setup instructions.
+
+**How it works:**
+1. Picard (in Docker) saves files to your music directory
+2. A file watcher (systemd service) detects new files
+3. Essentia analyzes and tags the files automatically
+
+**Included files for automation:**
+- `essentia_watcher.sh` - File watcher script using inotifywait
+- `essentia-tagger.service` - Systemd service file
+
+---
 ## 📖 Detailed Usage
 
 ### Interactive Configuration
