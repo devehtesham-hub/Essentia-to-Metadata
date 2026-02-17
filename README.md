@@ -9,7 +9,7 @@ Analyze your music collection using machine learning and write accurate genre an
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![Essentia](https://img.shields.io/badge/Essentia-2.1b6-green.svg)](https://essentia.upf.edu/)
-
+ 
 ---
 
 ## ✨ Features
