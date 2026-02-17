@@ -36,11 +36,8 @@ RUN bash download_models.sh
 # Copy application code
 COPY tag_music.py .
 
-# Default model directory inside the container
-ENV MODEL_DIR=/app/essentia_models
-
 # Music directory mount point
 VOLUME ["/music"]
 
 ENTRYPOINT ["python", "tag_music.py"]
-CMD ["/music", "--auto"]
+CMD ["/music", "--auto", "--model-dir", "/app/essentia_models"]
