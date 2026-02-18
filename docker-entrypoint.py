@@ -1,5 +1,5 @@
 """Docker entrypoint that suppresses noisy Essentia warnings before running the tagger."""
-import essentia.log
+import essentia
 essentia.log.warningActive = False
 essentia.log.infoActive = False
 
