@@ -7,6 +7,7 @@ import os
 import json
 import sys
 import argparse
+import multiprocessing
 from pathlib import Path
 from datetime import datetime
 import platform
@@ -178,6 +179,7 @@ Analysis Mode: {mode_label}
   - Write confidence tags: {config.write_confidence_tags}
   - Overwrite existing: {config.overwrite_existing}
   - Verbose output: {config.verbose}
+  - Parallel workers: {config.workers}
 {'=' * 80}
 
 """
@@ -299,6 +301,7 @@ class Config:
         self.log_file = None
         self.genre_format = 'parent_child'
         self.default_library_path = None
+        self.workers = max(1, (os.cpu_count() or 2) // 2)
 
 
 class EssentiaAnalyzer:
@@ -360,11 +363,11 @@ class EssentiaAnalyzer:
     def analyze_file(self, filepath):
         """Analyze a single audio file"""
         try:
-            # Load audio (resampled to 16kHz)
+            # Load audio (resampled to 16kHz, quality=1 is adequate for ML classification)
             audio = MonoLoader(
                 filename=str(filepath),
                 sampleRate=16000,
-                resampleQuality=4
+                resampleQuality=1
             )()
             
             # Get embeddings
@@ -747,13 +750,197 @@ class TagWriter:
             self.logger.log(f"     ✅ Written tags: {', '.join(tags_written)}", console=False)
 
 
+def has_existing_tags(filepath, enable_genres, enable_moods):
+    """Quick check if file already has genre/mood tags (avoids expensive analysis)."""
+    try:
+        audio = mutagen.File(filepath)
+        if audio is None or audio.tags is None:
+            return False
+
+        ext = Path(filepath).suffix.lower()
+        has_genre = False
+        has_mood = False
+
+        if ext in ('.flac', '.ogg', '.oga', '.opus'):
+            has_genre = 'GENRE' in audio
+            has_mood = 'MOOD' in audio
+        elif ext in ('.mp3', '.aiff', '.aif', '.wav', '.dsf'):
+            tags = audio.tags
+            if tags:
+                has_genre = bool(tags.getall('TCON'))
+                has_mood = any(
+                    getattr(c, 'desc', '') == 'Essentia Mood'
+                    for c in tags.getall('COMM')
+                )
+        elif ext in ('.m4a', '.m4b', '.mp4', '.aac'):
+            has_genre = '\xa9gen' in audio
+            has_mood = '----:com.apple.iTunes:MOOD' in audio
+        elif ext == '.wma':
+            has_genre = 'WM/Genre' in audio
+            has_mood = 'WM/Mood' in audio
+        elif ext in ('.wv', '.ape', '.mpc', '.mp+'):
+            tags = audio.tags or {}
+            has_genre = 'Genre' in tags
+            has_mood = 'Mood' in tags
+
+        if enable_genres and enable_moods:
+            return has_genre and has_mood
+        elif enable_genres:
+            return has_genre
+        elif enable_moods:
+            return has_mood
+        return False
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Multiprocessing worker functions
+# ---------------------------------------------------------------------------
+_worker_models = None
+
+
+def _init_worker(model_dir, enable_genres, enable_moods):
+    """Initializer for each worker process — loads TF models once per worker."""
+    global _worker_models
+
+    # Limit TF threading per worker to avoid oversubscription
+    os.environ['TF_NUM_INTER_OP_PARALLELISM_THREADS'] = '1'
+    os.environ['TF_NUM_INTRA_OP_PARALLELISM_THREADS'] = '1'
+    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
+    import essentia as _ess
+    _ess.log.warningActive = False
+    _ess.log.infoActive = False
+    from essentia.standard import TensorflowPredictEffnetDiscogs, TensorflowPredict2D
+
+    _worker_models = {}
+
+    _worker_models['embedding'] = TensorflowPredictEffnetDiscogs(
+        graphFilename=f"{model_dir}/discogs-effnet-bs64-1.pb",
+        output="PartitionedCall:1"
+    )
+
+    if enable_genres:
+        _worker_models['genre'] = TensorflowPredict2D(
+            graphFilename=f"{model_dir}/genre_discogs400-discogs-effnet-1.pb",
+            input="serving_default_model_Placeholder",
+            output="PartitionedCall"
+        )
+        with open(f"{model_dir}/genre_discogs400-discogs-effnet-1.json", 'r') as f:
+            _worker_models['genre_labels'] = json.load(f)['classes']
+
+    if enable_moods:
+        mood_path = f"{model_dir}/mtg_jamendo_moodtheme-discogs-effnet-1.pb"
+        if os.path.exists(mood_path):
+            _worker_models['mood'] = TensorflowPredict2D(
+                graphFilename=mood_path,
+                input="model/Placeholder",
+                output="model/Sigmoid"
+            )
+            with open(f"{model_dir}/mtg_jamendo_moodtheme-discogs-effnet-1.json", 'r') as f:
+                _worker_models['mood_labels'] = json.load(f)['classes']
+
+
+def _worker_process_file(args):
+    """Analyze a single file in a worker process. Returns results dict."""
+    filepath_str, config_dict = args
+    filepath = Path(filepath_str)
+
+    try:
+        # Early skip: check existing tags before expensive analysis
+        if not config_dict['overwrite_existing'] and not config_dict['dry_run']:
+            if has_existing_tags(filepath, config_dict['enable_genres'], config_dict['enable_moods']):
+                return {'filepath': filepath_str, 'status': 'skipped'}
+
+        from essentia.standard import MonoLoader
+
+        audio = MonoLoader(
+            filename=filepath_str,
+            sampleRate=16000,
+            resampleQuality=1
+        )()
+
+        embeddings = _worker_models['embedding'](audio)
+
+        results = {}
+
+        # Genre prediction
+        if 'genre' in _worker_models:
+            genre_predictions = _worker_models['genre'](embeddings)
+            genre_activations = np.mean(genre_predictions, axis=0)
+            genre_labels = _worker_models['genre_labels']
+            top_n = config_dict['top_n_genres']
+            threshold = config_dict['genre_threshold']
+            genre_format = config_dict['genre_format']
+
+            k = min(top_n * 2, len(genre_activations))
+            top_indices = np.argpartition(genre_activations, -k)[-k:]
+            top_indices = top_indices[np.argsort(genre_activations[top_indices])[::-1]]
+
+            genres = []
+            for idx in top_indices:
+                if len(genres) >= top_n:
+                    break
+                if genre_activations[idx] >= threshold:
+                    genres.append({
+                        'label': genre_labels[idx],
+                        'confidence': float(genre_activations[idx])
+                    })
+
+            if not genres:
+                top_idx = int(np.argmax(genre_activations))
+                genres.append({
+                    'label': genre_labels[top_idx],
+                    'confidence': float(genre_activations[top_idx])
+                })
+
+            results['genres'] = genres
+            results['formatted_genres'] = [
+                format_genre_tag(g['label'], style=genre_format) for g in genres
+            ]
+            all_top = np.argsort(genre_activations)[::-1][:10]
+            results['all_genres_debug'] = [
+                (genre_labels[idx], float(genre_activations[idx])) for idx in all_top
+            ]
+
+        # Mood prediction
+        if 'mood' in _worker_models:
+            mood_predictions = _worker_models['mood'](embeddings)
+            mood_activations = np.mean(mood_predictions, axis=0)
+            mood_labels = _worker_models['mood_labels']
+            mood_threshold = config_dict['mood_threshold']
+
+            moods = []
+            for idx, activation in enumerate(mood_activations):
+                if activation >= mood_threshold:
+                    moods.append({
+                        'label': mood_labels[idx],
+                        'confidence': float(activation)
+                    })
+            moods = sorted(moods, key=lambda x: x['confidence'], reverse=True)[:5]
+            results['moods'] = moods
+            results['formatted_moods'] = [format_mood_tag(m['label']) for m in moods]
+            results['all_moods_debug'] = sorted(
+                [(mood_labels[idx], float(mood_activations[idx]))
+                 for idx in range(len(mood_activations))],
+                key=lambda x: x[1], reverse=True
+            )
+
+        return {'filepath': filepath_str, 'status': 'success', 'results': results}
+
+    except Exception as e:
+        return {'filepath': filepath_str, 'status': 'error', 'error': str(e)}
+
+
 def scan_library(root_path, analyzer, tag_writer, config, logger):
     """Recursively scan and process music library"""
     root = Path(root_path)
     
     logger.log("\n🔍 Scanning for audio files...")
-    files = list(root.rglob('*'))
-    audio_files = [f for f in files if f.suffix.lower() in AUDIO_EXTENSIONS]
+    audio_files = sorted(
+        [f for f in root.rglob('*') if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS]
+    )
     
     if not audio_files:
         logger.log("❌ No audio files found in this directory!")
@@ -762,9 +949,52 @@ def scan_library(root_path, analyzer, tag_writer, config, logger):
     logger.log(f"🎵 Found {len(audio_files)} audio files")
     logger.log(f"{'=' * 70}\n")
     
+    if config.workers > 1 and len(audio_files) > 1:
+        _scan_parallel(audio_files, root, tag_writer, config, logger)
+    else:
+        _scan_sequential(audio_files, root, analyzer, tag_writer, config, logger)
+
+
+def _log_file_results(results, config, logger):
+    """Log analysis results for a single file to console and log file."""
+    if config.enable_genres:
+        if results.get('genres'):
+            genre_list = [f"{g['label']} ({g['confidence']:.1%})" for g in results['genres']]
+            logger.log(f"     🎸 Raw: {', '.join(genre_list)}")
+        if results.get('formatted_genres'):
+            logger.log(f"     🎸 Formatted: {', '.join(results['formatted_genres'])}")
+
+    if config.enable_moods:
+        if results.get('moods'):
+            mood_list = [f"{m['label']} ({m['confidence']:.1%})" for m in results['moods'][:3]]
+            logger.log(f"     😊 Raw: {', '.join(mood_list)}")
+        if results.get('formatted_moods'):
+            logger.log(f"     😊 Formatted: {', '.join(results['formatted_moods'][:3])}")
+        elif results.get('moods') is not None and len(results.get('moods', [])) == 0:
+            logger.log(f"     😊 Moods: None above threshold ({config.mood_threshold:.2%})")
+
+    if config.verbose and results.get('all_genres_debug'):
+        top_5 = ', '.join([f"{label} ({conf:.1%})" for label, conf in results['all_genres_debug'][:5]])
+        logger.log(f"     📊 Top 5 genres: {top_5}", console=False)
+
+
+def _log_summary(processed, errors, skipped, logger):
+    """Print and log the final summary."""
+    logger.log(f"\n{'=' * 70}")
+    logger.log(f"📊 SUMMARY")
+    logger.log(f"{'=' * 70}")
+    logger.log(f"✅ Processed: {processed}")
+    logger.log(f"❌ Errors: {errors}")
+    logger.log(f"⏭️  Skipped: {skipped}")
+    logger.log_summary(processed, errors, skipped)
+
+
+def _scan_sequential(audio_files, root, analyzer, tag_writer, config, logger):
+    """Process files one at a time (single-worker mode)."""
     processed = 0
     skipped = 0
     errors = 0
+    total = len(audio_files)
     
     for i, filepath in enumerate(audio_files, 1):
         try:
@@ -772,39 +1002,21 @@ def scan_library(root_path, analyzer, tag_writer, config, logger):
         except ValueError:
             relative_path = filepath.name
         
-        logger.log(f"[{i}/{len(audio_files)}] {relative_path}")
+        # Early skip: avoid expensive analysis if tags already exist
+        if not config.overwrite_existing and not config.dry_run:
+            if has_existing_tags(filepath, config.enable_genres, config.enable_moods):
+                logger.log(f"[{i}/{total}] ⏭️  {relative_path} (already tagged)")
+                skipped += 1
+                logger.log("")
+                continue
         
-        # Analyze
+        logger.log(f"[{i}/{total}] {relative_path}")
+        
         results = analyzer.analyze_file(filepath)
         
         if results:
-            # Print genre results to console
-            if config.enable_genres:
-                if results.get('genres'):
-                    genre_list = [f"{g['label']} ({g['confidence']:.1%})" for g in results['genres']]
-                    logger.log(f"     🎸 Raw: {', '.join(genre_list)}")
-                if results.get('formatted_genres'):
-                    logger.log(f"     🎸 Formatted: {', '.join(results['formatted_genres'])}")
-            
-            # Print mood results to console
-            if config.enable_moods:
-                if results.get('moods'):
-                    mood_list = [f"{m['label']} ({m['confidence']:.1%})" for m in results['moods'][:3]]
-                    logger.log(f"     😊 Raw: {', '.join(mood_list)}")
-                if results.get('formatted_moods'):
-                    logger.log(f"     😊 Formatted: {', '.join(results['formatted_moods'][:3])}")
-                elif results.get('moods') is not None and len(results.get('moods', [])) == 0:
-                    logger.log(f"     😊 Moods: None above threshold ({config.mood_threshold:.2%})")
-            
-            # Show debug info if verbose
-            if config.verbose and results.get('all_genres_debug'):
-                top_5 = ', '.join([f"{label} ({conf:.1%})" for label, conf in results['all_genres_debug'][:5]])
-                logger.log(f"     📊 Top 5 genres: {top_5}", console=False)
-            
-            # Log detailed analysis to file
+            _log_file_results(results, config, logger)
             logger.log_analysis(filepath, results, relative_path)
-            
-            # Write tags
             tag_writer.write_tags(filepath, results)
             
             if not config.dry_run:
@@ -816,15 +1028,77 @@ def scan_library(root_path, analyzer, tag_writer, config, logger):
         
         logger.log("")
     
-    # Summary
-    logger.log(f"\n{'=' * 70}")
-    logger.log(f"📊 SUMMARY")
-    logger.log(f"{'=' * 70}")
-    logger.log(f"✅ Processed: {processed}")
-    logger.log(f"❌ Errors: {errors}")
-    logger.log(f"⏭️  Skipped: {skipped}")
-    
-    logger.log_summary(processed, errors, skipped)
+    _log_summary(processed, errors, skipped, logger)
+
+
+def _scan_parallel(audio_files, root, tag_writer, config, logger):
+    """Process files using a multiprocessing pool for parallel analysis."""
+    num_workers = min(config.workers, len(audio_files))
+    logger.log(f"⚡ Using {num_workers} parallel workers\n")
+
+    config_dict = {
+        'enable_genres': config.enable_genres,
+        'enable_moods': config.enable_moods,
+        'top_n_genres': config.top_n_genres,
+        'genre_threshold': config.genre_threshold,
+        'mood_threshold': config.mood_threshold,
+        'genre_format': config.genre_format,
+        'overwrite_existing': config.overwrite_existing,
+        'dry_run': config.dry_run,
+        'write_confidence_tags': config.write_confidence_tags,
+        'verbose': config.verbose,
+    }
+
+    args_list = [(str(f), config_dict) for f in audio_files]
+
+    processed = 0
+    errors = 0
+    skipped = 0
+    total = len(audio_files)
+
+    ctx = multiprocessing.get_context('spawn')
+    with ctx.Pool(
+        processes=num_workers,
+        initializer=_init_worker,
+        initargs=(MODEL_DIR, config.enable_genres, config.enable_moods)
+    ) as pool:
+        try:
+            for result in pool.imap_unordered(_worker_process_file, args_list):
+                count = processed + errors + skipped + 1
+                filepath = Path(result['filepath'])
+
+                try:
+                    relative_path = filepath.relative_to(root)
+                except ValueError:
+                    relative_path = filepath.name
+
+                if result['status'] == 'skipped':
+                    logger.log(f"[{count}/{total}] ⏭️  {relative_path} (already tagged)")
+                    skipped += 1
+                elif result['status'] == 'error':
+                    logger.log(f"[{count}/{total}] ❌ {relative_path}: {result.get('error', 'unknown')}")
+                    errors += 1
+                else:
+                    results = result['results']
+                    logger.log(f"[{count}/{total}] {relative_path}")
+                    _log_file_results(results, config, logger)
+                    logger.log_analysis(filepath, results, relative_path)
+
+                    # Write tags in main process (safe, sequential I/O)
+                    tag_writer.write_tags(filepath, results)
+
+                    if not config.dry_run:
+                        logger.log("     ✅ Tags written")
+
+                    processed += 1
+
+                logger.log("")
+        except KeyboardInterrupt:
+            logger.log("\n⚠️  Interrupted — terminating workers...")
+            pool.terminate()
+            pool.join()
+
+    _log_summary(processed, errors, skipped, logger)
 
 
 def _read_key():
@@ -1065,8 +1339,7 @@ def get_music_path(config):
             choice = input("Select option [1]: ").strip()
             if choice in ('', '1'):
                 path = Path(library_path)
-                sample_files = list(path.rglob('*'))
-                audio_count = len([f for f in sample_files if f.suffix.lower() in AUDIO_EXTENSIONS])
+                audio_count = sum(1 for f in path.rglob('*') if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS)
                 print(f"\n📂 Directory: {path}")
                 print(f"🎵 Found ~{audio_count} audio files")
                 confirm = input("\nProceed with this directory? [Y/n]: ").strip().lower()
@@ -1080,8 +1353,9 @@ def get_music_path(config):
                 selected = browse_directory(library_path)  # list[str] or None
                 if selected:
                     total_audio = sum(
-                        len([f for f in Path(p).rglob('*') if f.suffix.lower() in AUDIO_EXTENSIONS])
-                        for p in selected
+                        1 for p in selected
+                        for f in Path(p).rglob('*')
+                        if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS
                     )
                     if len(selected) == 1:
                         print(f"\n📂 Selected: {selected[0]}")
@@ -1159,7 +1433,7 @@ def get_music_path(config):
         
         # Preview what will be scanned
         sample_files = list(path.rglob('*'))
-        audio_count = len([f for f in sample_files if f.suffix.lower() in AUDIO_EXTENSIONS])
+        audio_count = sum(1 for f in sample_files if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS)
         
         print(f"\n📂 Directory: {path}")
         print(f"🎵 Found ~{audio_count} audio files")
@@ -1321,6 +1595,18 @@ def configure_settings():
     print("   Show detailed analysis info (top 10 predictions, etc.)")
     config.verbose = get_yes_no("Enable verbose output?", default=True)
     
+    # Parallel processing
+    cpu_count = os.cpu_count() or 2
+    default_workers = max(1, cpu_count // 2)
+    print("\n" + "─" * 70)
+    print("⚡ PARALLEL PROCESSING")
+    print(f"   CPU cores detected: {cpu_count}")
+    print(f"   Using multiple workers speeds up large library scans")
+    print(f"   • 1 = Sequential (one file at a time)")
+    print(f"   • {default_workers} = Recommended (half of CPU cores)")
+    print(f"   • {cpu_count} = Maximum (all cores, high memory usage)")
+    config.workers = get_int_input("Number of workers", default=default_workers, min_val=1, max_val=cpu_count)
+    
     return config
 
 
@@ -1360,6 +1646,7 @@ def display_config_summary(config, music_path):
     print(f"   • Write confidence tags: {config.write_confidence_tags}")
     print(f"   • Overwrite existing: {config.overwrite_existing}")
     print(f"   • Verbose output: {config.verbose}")
+    print(f"   • Parallel workers: {config.workers}")
     
     if config.dry_run:
         print(f"\n⚠️  DRY RUN MODE - No files will be modified!")
@@ -1530,6 +1817,14 @@ Genre format styles:
         help='Default music library path (saved for future runs)'
     )
     
+    parser.add_argument(
+        '--workers', '-w',
+        type=int,
+        default=0,
+        metavar='N',
+        help='Number of parallel workers (default: auto = half of CPU cores, 1 = sequential)'
+    )
+    
     return parser.parse_args()
 
 
@@ -1551,6 +1846,7 @@ def config_from_args(args):
     config.overwrite_existing = args.overwrite
     config.verbose = not args.quiet
     config.genre_format = args.genre_format
+    config.workers = args.workers if args.workers > 0 else max(1, (os.cpu_count() or 2) // 2)
     
     # Handle library path
     if args.library:
@@ -1657,9 +1953,15 @@ def main():
                 logger.log(f"   Genres: {config.top_n_genres} (threshold: {config.genre_threshold:.1%})")
             if config.enable_moods:
                 logger.log(f"   Moods: enabled (threshold: {config.mood_threshold:.2%})")
+            if config.workers > 1 and not args.single_file:
+                logger.log(f"   Workers: {config.workers} (parallel)")
             logger.log("")
             
-            analyzer = EssentiaAnalyzer(config, logger)
+            # Only load models in main process for sequential mode / single-file
+            if config.workers <= 1 or args.single_file:
+                analyzer = EssentiaAnalyzer(config, logger)
+            else:
+                analyzer = None  # Models loaded per-worker in parallel mode
             tag_writer = TagWriter(config, logger)
             
             if args.single_file:
@@ -1710,8 +2012,11 @@ def main():
             logger = Logger(config.log_file)
             logger.log_config(config, music_paths)
             
-            # Initialize
-            analyzer = EssentiaAnalyzer(config, logger)
+            # Only load models in main process for sequential mode
+            if config.workers <= 1:
+                analyzer = EssentiaAnalyzer(config, logger)
+            else:
+                analyzer = None  # Models loaded per-worker in parallel mode
             tag_writer = TagWriter(config, logger)
             
             # Process each selected path
