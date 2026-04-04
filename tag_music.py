@@ -12,9 +12,9 @@ from pathlib import Path
 from datetime import datetime
 import platform
 import numpy as np
-from essentia.standard import MonoLoader, TensorflowPredictEffnetDiscogs, TensorflowPredict2D
-import essentia
-essentia.log.warningActive = False
+
+# Essentia/TF imports are deferred to EssentiaAnalyzer.__init__ and worker
+# processes so that TF thread settings can be configured before initialization.
 import mutagen
 from mutagen.flac import FLAC
 from mutagen.id3 import ID3, TCON, COMM
@@ -180,6 +180,7 @@ Analysis Mode: {mode_label}
   - Overwrite existing: {config.overwrite_existing}
   - Verbose output: {config.verbose}
   - Parallel workers: {config.workers}
+  - Max audio duration: {int(config.max_audio_duration) if config.max_audio_duration < float('inf') else 'unlimited'}s
 {'=' * 80}
 
 """
@@ -302,6 +303,7 @@ class Config:
         self.genre_format = 'parent_child'
         self.default_library_path = None
         self.workers = max(1, (os.cpu_count() or 2) // 2)
+        self.max_audio_duration = 300  # seconds — cap audio sent to TF models
 
 
 class EssentiaAnalyzer:
@@ -312,6 +314,10 @@ class EssentiaAnalyzer:
         self.logger = logger
         
         logger.log("\n🔄 Loading models...")
+        
+        import essentia
+        essentia.log.warningActive = False
+        from essentia.standard import TensorflowPredictEffnetDiscogs, TensorflowPredict2D
         
         self.embedding_model = TensorflowPredictEffnetDiscogs(
             graphFilename=EMBEDDING_MODEL,
@@ -363,12 +369,20 @@ class EssentiaAnalyzer:
     def analyze_file(self, filepath):
         """Analyze a single audio file"""
         try:
+            from essentia.standard import MonoLoader
+            
             # Load audio (resampled to 16kHz, quality=1 is adequate for ML classification)
             audio = MonoLoader(
                 filename=str(filepath),
                 sampleRate=16000,
                 resampleQuality=1
             )()
+            
+            # Truncate to max duration — genre/mood classification doesn't need
+            # the full track and this dramatically speeds up long files
+            max_samples = int(self.config.max_audio_duration * 16000)
+            if len(audio) > max_samples:
+                audio = audio[:max_samples]
             
             # Get embeddings
             embeddings = self.embedding_model(audio)
@@ -861,6 +875,11 @@ def _worker_process_file(args):
             resampleQuality=1
         )()
 
+        # Truncate to max duration
+        max_samples = int(config_dict['max_audio_duration'] * 16000)
+        if len(audio) > max_samples:
+            audio = audio[:max_samples]
+
         embeddings = _worker_models['embedding'](audio)
 
         results = {}
@@ -1047,6 +1066,7 @@ def _scan_parallel(audio_files, root, tag_writer, config, logger):
         'dry_run': config.dry_run,
         'write_confidence_tags': config.write_confidence_tags,
         'verbose': config.verbose,
+        'max_audio_duration': config.max_audio_duration,
     }
 
     args_list = [(str(f), config_dict) for f in audio_files]
@@ -1647,6 +1667,10 @@ def display_config_summary(config, music_path):
     print(f"   • Overwrite existing: {config.overwrite_existing}")
     print(f"   • Verbose output: {config.verbose}")
     print(f"   • Parallel workers: {config.workers}")
+    if config.max_audio_duration < float('inf'):
+        print(f"   • Max audio duration: {int(config.max_audio_duration)}s")
+    else:
+        print(f"   • Max audio duration: unlimited")
     
     if config.dry_run:
         print(f"\n⚠️  DRY RUN MODE - No files will be modified!")
@@ -1825,6 +1849,14 @@ Genre format styles:
         help='Number of parallel workers (default: auto = half of CPU cores, 1 = sequential)'
     )
     
+    parser.add_argument(
+        '--max-duration',
+        type=int,
+        default=300,
+        metavar='SECS',
+        help='Max seconds of audio to analyze per track (default: 300, 0 = no limit)'
+    )
+    
     return parser.parse_args()
 
 
@@ -1847,6 +1879,7 @@ def config_from_args(args):
     config.verbose = not args.quiet
     config.genre_format = args.genre_format
     config.workers = args.workers if args.workers > 0 else max(1, (os.cpu_count() or 2) // 2)
+    config.max_audio_duration = args.max_duration if args.max_duration > 0 else float('inf')
     
     # Handle library path
     if args.library:
