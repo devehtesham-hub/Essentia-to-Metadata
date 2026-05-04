@@ -1,15 +1,9 @@
-# [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Support-yellow?logo=buy-me-a-coffee)](https://buymeacoffee.com/succinctrecords)
-
 # 🎸 Essentia Music Tagger
 
-**Intelligent audio analysis and automatic genre/mood tagging for your music library**
+**Smart audio analysis and automatic genre/mood tagging for your music collection**
 
-Analyze your music collection using machine learning and write accurate genre and mood tags directly to your audio files. No internet required - all processing happens locally using [Essentia](https://essentia.upf.edu/), an advanced audio analysis library from the Music Technology Group.
+Scan your music library using machine learning and write precise genre and mood tags straight to your audio files. No internet connection needed — everything runs locally via [Essentia](https://essentia.upf.edu/), a powerful audio analysis library developed by the Music Technology Group.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![Essentia](https://img.shields.io/badge/Essentia-2.1b6-green.svg)](https://essentia.upf.edu/)
- 
 ---
 
 ## ✨ Features
@@ -18,8 +12,8 @@ Analyze your music collection using machine learning and write accurate genre an
 - 🎼 **400 genre classifications** - Uses Discogs taxonomy for detailed genre tagging
 - 😊 **Mood detection** - Detects moods like energetic, dark, happy, aggressive, etc.
 - 🎚️ **Analysis mode selection** - Choose genres only, moods only, or both per run
-- � **Default library path** - Save your library root; browse it with an arrow-key folder navigator on every run
-- �🔄 **Batch processing** - Recursively process entire music libraries
+- 📂 **Default library path** - Save your library root; browse it with an arrow-key folder navigator on every run
+- 🔄 **Batch processing** - Recursively process entire music libraries
 - 🎛️ **Fully configurable** - Interactive prompts for all settings on each run
 - 📝 **Comprehensive logging** - Detailed logs with confidence scores and predictions
 - 🏷️ **Multiple tag formats** - Choose how genre tags are formatted
@@ -28,13 +22,13 @@ Analyze your music collection using machine learning and write accurate genre an
 - 🚀 **CPU-only** - No GPU required (though it helps!)
 - 🐳 **Docker support** - Run with Docker, with optional GPU acceleration
 - 🤖 **Automation support** - CLI arguments for scripted/automated workflows
-- 🔄 **Picard integration** - Auto-tag files saved by MusicBrainz Picard.
+- 🔄 **Picard integration** - Auto-tag files saved by MusicBrainz Picard
 
 ---
 
 ## 🎵 How It Works
 
-Unlike tools like MusicBrainz Picard or beets that look up metadata from online databases, **Essentia Music Tagger analyzes the actual audio waveform** using deep learning models:
+Unlike tools such as MusicBrainz Picard or beets that pull metadata from online databases, **Essentia Music Tagger examines the actual audio waveform** using deep learning models:
 
 1. **Loads audio** - Reads your music files
 2. **Extracts features** - Analyzes spectral, tonal, and rhythmic characteristics
@@ -70,8 +64,6 @@ Tags written:
 
 ```bash
 # 1. Clone the repository
-cd /srv/dev-disk-by-uuid-dc4918d5-6597-465b-9567-ce442fbd8e2a/Github
-git clone https://github.com/WB2024/Essentia-to-Metadata.git
 cd Essentia-to-Metadata
 
 # 2. Create virtual environment
@@ -87,22 +79,24 @@ bash download_models.sh
 
 ### First Run
 
+```bash
 # Run the script
-
 python tag_music.py
+```
 
 You'll be prompted for:
 
-- 📂 **Music directory** to analyze
-- 🎸 **Number of genres** to tag (1-10)
-- 📊 **Confidence thresholds** for genre/mood
-- 🎨 **Tag formatting** style
-- 🧪 **Dry run mode** (test first!)
+- 📂 **Music directory** to analyze
+- 🎸 **Number of genres** to tag (1-10)
+- 📊 **Confidence thresholds** for genre/mood
+- 🎨 **Tag formatting** style
+- 🧪 **Dry run mode** (test first!)
 - And more...
 
-**Recommendation:** Run in dry-run mode first to preview results!
+**Recommendation:** Run in dry-run mode first to preview results!
 
 ---
+
 ## 🐳 Docker
 
 ### CPU mode
@@ -139,7 +133,7 @@ If no GPU is available on the host, use the CPU profile instead.
 
 ## 🤖 Command Line / Automation Mode
 
-For scripting or integration with other tools, use CLI arguments:
+To integrate with other tools or run scripted workflows, pass CLI arguments directly:
 
 ```bash
 # Basic automated mode
@@ -187,9 +181,9 @@ python tag_music.py /path/to/music --auto --dry-run
 
 ## 🎵 MusicBrainz Picard Automation
 
-Automatically tag files whenever Picard saves them! Perfect for server setups.
+Automatically tag files the moment Picard saves them — ideal for server environments.
 
-See **[PICARD_AUTOMATION_SETUP.md](PICARD_AUTOMATION_SETUP.md)** for complete setup instructions.
+See **[PICARD_AUTOMATION_SETUP.md](PICARD_AUTOMATION_SETUP.md)** for the full setup guide.
 
 **How it works:**
 1. Picard (in Docker) saves files to your music directory
@@ -201,17 +195,18 @@ See **[PICARD_AUTOMATION_SETUP.md](PICARD_AUTOMATION_SETUP.md)** for complete se
 - `essentia-tagger.service` - Systemd service file
 
 ---
+
 ## 📖 Detailed Usage
 
 ### Interactive Configuration
 
-Every run prompts you to configure:
+Each run lets you configure the following settings:
 
 #### Default Library Path
 
-The first setting lets you define (or update) a **default music library root path**, saved persistently to `~/.essentia_tagger.json`.
+The first prompt lets you define (or update) a **default music library root path**, saved persistently to `~/.essentia_tagger.json`.
 
-Once set, every subsequent run begins with a path selection menu:
+Once set, every subsequent run starts with a path selection menu:
 
 | Option | Description |
 |--------|-------------|
@@ -221,7 +216,7 @@ Once set, every subsequent run begins with a path selection menu:
 
 #### Interactive Folder Browser
 
-Option 2 opens a full-screen CLI folder navigator:
+Option 2 launches a full-screen CLI folder navigator:
 
 ```
    📂 Browsing: /2Pac
@@ -244,7 +239,7 @@ Option 2 opens a full-screen CLI folder navigator:
 
 #### Analysis Mode
 
-Choose what to analyse for each run:
+Pick what to analyse for each run:
 
 | Option | Description |
 |--------|-------------|
@@ -252,7 +247,7 @@ Choose what to analyse for each run:
 | **2. Genres only** | Run only the genre model; skip mood analysis entirely |
 | **3. Moods only** | Run only the mood model; skip genre analysis entirely |
 
-Only the models that are needed are loaded, saving memory and time when running in a single-mode.
+Only the necessary models are loaded, saving memory and time when running in a single-mode.
 
 #### Genre Settings *(shown when mode is Both or Genres only)*
 
@@ -277,6 +272,7 @@ Only the models that are needed are loaded, saving memory and time when running 
 
 ### Example Session
 
+```
 $ python tag_music.py
 
 🎸 ESSENTIA MUSIC TAGGER - INTERACTIVE MODE
@@ -292,7 +288,7 @@ Enter the path to analyze: /music/2Pac
 🧪 DRY RUN MODE
 Enable dry run mode? [Y/n]: y
 
-�️ ANALYSIS MODE
+🎛️ ANALYSIS MODE
   1. Both genres and moods (default)
   2. Genres only
   3. Moods only
@@ -315,26 +311,29 @@ Mood threshold (%) [0.5]: 0.5
      😊 Raw: energetic (2.3%), dark (1.8%)
      😊 Formatted: Energetic, Dark
      [DRY RUN] Would write: Genres: Hip-Hop - Gangsta, Hip-Hop - East Coast Hip Hop | Moods: Energetic, Dark
+```
+
+---
 
 ## 🎛️ Configuration Guide
 
 ### Confidence Thresholds
 
-Understanding confidence scores:
+A guide to interpreting confidence scores:
 
 **Genres:**
 
-- Model predicts across **400 possible classes**
-- Top prediction typically 15-40%
-- **15% threshold** = balanced (recommended)
-- **25% threshold** = strict (fewer genres)
-- **5% threshold** = inclusive (more genres)
+- The model scores across **400 possible classes**
+- Top predictions typically land between 15-40%
+- **15% threshold** = balanced (recommended)
+- **25% threshold** = strict (fewer genres)
+- **5% threshold** = inclusive (more genres)
 
 **Moods:**
 
-- Naturally **much lower** than genres (0.1-5% range)
-- **0.5% threshold** = good starting point
-- **1-3%** = more selective
+- Naturally **much lower** than genres (0.1-5% range)
+- **0.5% threshold** = good starting point
+- **1-3%** = more selective
 
 ### Tag Formatting Examples
 
@@ -350,7 +349,7 @@ Understanding confidence scores:
 
 ### Tags Written
 
-Tags are written using the native tagging format for each container:
+Tags are written using each container's native tagging format:
 
 **FLAC / OGG Vorbis / OGG Opus** (Vorbis Comments):
 
@@ -384,10 +383,11 @@ Tags are written using the native tagging format for each container:
 
 ### Log Files
 
-Each run creates a timestamped log: `essentia_tagger_YYYYMMDD_HHMMSS.log`
+Every run generates a timestamped log: `essentia_tagger_YYYYMMDD_HHMMSS.log`
 
 Example log content:
 
+```
 FILE: 2Pac/Me Against the World/05 - Temptations.flac
 ────────────────────────────────────────────────────────────────────────────
 GENRES (raw predictions):
@@ -407,39 +407,42 @@ ALL GENRE PREDICTIONS (top 10):
 MOODS (passed threshold - 2 total):
   • energetic: 2.34%
   • dark: 1.87%
+```
+
+---
 
 ## 🎓 Understanding the Models
 
 ### Genre Model: Discogs-400
 
-- **Classes:** 400 genre/style categories from Discogs taxonomy
-- **Architecture:** EfficientNet-based CNN
-- **Training:** Supervised learning on Discogs-tagged releases
-- **Strengths:** Very detailed genre classification
-- **Example classes:** `Hip-Hop---Golden Age Hip Hop`, `Rock---Shoegaze`, `Electronic---Deep House`
+- **Classes:** 400 genre/style categories from Discogs taxonomy
+- **Architecture:** EfficientNet-based CNN
+- **Training:** Supervised learning on Discogs-tagged releases
+- **Strengths:** Very detailed genre classification
+- **Example classes:** `Hip-Hop---Golden Age Hip Hop`, `Rock---Shoegaze`, `Electronic---Deep House`
 
 ### Mood Model: MTG-Jamendo
 
-- **Classes:** Mood and theme tags (energetic, dark, happy, sad, etc.)
-- **Architecture:** Multi-label classification
-- **Training:** MTG-Jamendo dataset with crowd-sourced tags
-- **Note:** Lower confidence than genres (this is normal!)
+- **Classes:** Mood and theme tags (energetic, dark, happy, sad, etc.)
+- **Architecture:** Multi-label classification
+- **Training:** MTG-Jamendo dataset with crowd-sourced tags
+- **Note:** Lower confidence than genres (this is normal!)
 
 ### Embedding Model: Discogs-Effnet
 
-- **Purpose:** Extracts audio features for downstream tasks
-- **Input:** 16kHz audio resampled from any format
-- **Output:** High-dimensional embedding vectors
+- **Purpose:** Extracts audio features for downstream tasks
+- **Input:** 16kHz audio resampled from any format
+- **Output:** High-dimensional embedding vectors
 
 ---
 
 ## ⚡ Performance
 
-**Processing Speed** (CPU-only, Intel i3-4150T @ 3.00GHz):
+**Processing Speed** (CPU-only, Intel i3-4150T @ 3.00GHz):
 
-- **~5-15 seconds** per track (varies by length and complexity)
-- **~500 tracks** = 2-4 hours
-- **~2000 tracks** = 8-16 hours
+- **~5-15 seconds** per track (varies by length and complexity)
+- **~500 tracks** = 2-4 hours
+- **~2000 tracks** = 8-16 hours
 
 **Tips for faster processing:**
 
@@ -450,7 +453,7 @@ MOODS (passed threshold - 2 total):
 
 **Memory Usage:**
 
-- **~2-3GB RAM** during processing
+- **~2-3GB RAM** during processing
 - Models loaded once, reused for all files
 
 ---
@@ -459,8 +462,8 @@ MOODS (passed threshold - 2 total):
 
 ### "Could not load model" errors
 
-- Ensure models are downloaded: `bash download_models.sh`
-- Check `~/essentia_models/` contains `.pb` and `.json` files
+- Ensure models are downloaded: `bash download_models.sh`
+- Check `~/essentia_models/` contains `.pb` and `.json` files
 
 ### "No moods above threshold"
 
@@ -470,9 +473,11 @@ MOODS (passed threshold - 2 total):
 
 ### TensorFlow warnings
 
+```
 Could not load dynamic library 'libcudart.so.11.0'
+```
 
-- **Safe to ignore** - means no GPU, will use CPU
+- **Safe to ignore** - means no GPU, will use CPU
 - Performance is still good on CPU
 
 ### Out of memory
@@ -485,7 +490,7 @@ Could not load dynamic library 'libcudart.so.11.0'
 
 ## 🤝 Contributing
 
-Contributions welcome! Please:
+Contributions are welcome! Please:
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
@@ -504,50 +509,20 @@ Contributions welcome! Please:
 
 ---
 
-## 📜 License
-
-This project is licensed under the MIT License - see the [LICENSE](https://github.com/copilot/c/LICENSE) file for details.
-
-**Note:** Essentia library itself is licensed under AGPL-3.0. Pre-trained models from MTG are available under CC BY-NC-ND 4.0 for non-commercial use.
-
----
-
 ## 🙏 Credits
-
-### Built With
-
-- **[Essentia](https://essentia.upf.edu/)** - Audio analysis library by Music Technology Group
-- **[Mutagen](https://mutagen.readthedocs.io/)** - Python library for audio metadata
-- **[NumPy](https://numpy.org/)** - Numerical computing
 
 ### Models
 
 Pre-trained models provided by:
 
-- **[Music Technology Group (MTG)](https://www.upf.edu/web/mtg)** - Universitat Pompeu Fabra
+- **[Music Technology Group (MTG)](https://www.upf.edu/web/mtg)** - Universitat Pompeu Fabra
 - Trained on public datasets: Discogs, MTG-Jamendo, AcousticBrainz
 
 ### Inspiration
 
-- [AcousticBrainz](https://acousticbrainz.org/) - Crowdsourced acoustic analysis
-- [beets](https://beets.io/) - Music library management
-- [MusicBrainz Picard](https://picard.musicbrainz.org/) - Music tagger
-
----
-
-## 📚 Further Reading
-
-- [Essentia Documentation](https://essentia.upf.edu/documentation.html)
-- [MTG Models Repository](https://essentia.upf.edu/models.html)
-- [Discogs Genre Taxonomy](https://www.discogs.com/help/doc/submission-guidelines-release-genres-styles)
-- [Music Information Retrieval](https://musicinformationretrieval.com/)
-
----
-
-## 💬 Support
-
-- **Issues:** [GitHub Issues](https://github.com/WB2024/Essentia-to-Metadata/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/WB2024/Essentia-to-Metadata/discussions)
+- [AcousticBrainz](https://acousticbrainz.org/) - Crowdsourced acoustic analysis
+- [beets](https://beets.io/) - Music library management
+- [MusicBrainz Picard](https://picard.musicbrainz.org/) - Music tagger
 
 ---
 
@@ -555,48 +530,18 @@ Pre-trained models provided by:
 
 ### 1. Organize Your Music Library
 
-Tag your entire collection with accurate genres for better browsing in music players.
+Apply accurate genre tags across your entire collection for improved browsing in any music player.
 
 ### 2. DJ / Producer Workflow
 
-Quickly find tracks by mood/energy for mixing and production.
+Quickly locate tracks by mood or energy level for mixing and production sessions.
 
 ### 3. Music Research
 
-Analyze genre distributions in music collections.
+Study genre distributions across music collections for analysis purposes.
 
 ### 4. Playlist Generation
 
-Use mood tags to create dynamic playlists (energetic workout mixes, relaxing evening music, etc.).
+Leverage mood tags to build dynamic playlists — high-energy workout sets, mellow evening listening, and everything in between.
 
 ---
-
-## 📋 Changelog
-
-### v2.0.0 (Latest)
-
-#### New Features
-
-- **Analysis mode selection** — New 3-way mode menu in interactive mode lets you choose to run genres only, moods only, or both. The corresponding ML models are only loaded when needed, reducing memory usage when running in single-mode. CLI equivalents: `--no-genres` and `--no-moods`.
-- **Default library path & folder browser** — Set a default music library root path (saved to `~/.essentia_tagger.json`). On each interactive run you can scan the whole library, drill into a subfolder using an arrow-key folder browser, or type a custom path. No more copying and pasting long paths. CLI equivalent: `--library /path/to/library`.
-- **Wide audio format support** — Tag writing now covers 12 audio container formats via native tag systems:
-  - Vorbis Comments: FLAC, OGG Vorbis, OGG Opus
-  - ID3v2: MP3, AIFF, WAV, DSF
-  - iTunes atoms: M4A, MP4, AAC
-  - ASF: WMA
-  - APEv2: WavPack (`.wv`), Monkey's Audio (`.ape`), Musepack (`.mpc`)
-- **Per-tag-type overwrite logic** — Genre and mood tags are now checked and potentially skipped independently. Previously, if a genre tag existed and overwrite was disabled the entire file was skipped, including moods.
-
-#### Bug Fixes
-
-- Fixed MP3 mood tags never being written when genres were disabled — mood writing was incorrectly nested inside the genres block.
-- Fixed bare `except:` clause in MP3 tag writing replaced with `except Exception:` to avoid swallowing system exits and keyboard interrupts.
-- Fixed `mood_threshold` config default mismatch — the internal default was `0.01` while the CLI help text advertised `0.5%` (0.005). Both are now consistently `0.005`.
-- Removed unused imports (`re`, `from mutagen.mp3 import MP3`).
-
----
-
-**Made with ❤️ for music lovers and data nerds**
-
-*If this project helps you, consider ⭐ starring the repo!*
-
